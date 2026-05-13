@@ -1,0 +1,11 @@
+.tmp/*
+!.tmp/.gitkeep
+.env
+credentials.json
+token.json
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+.DS_Store
