@@ -47,7 +47,7 @@ def build_config(args: argparse.Namespace) -> ResearchConfig:
         blocked_domains=tuple(args.blocked_domains or parse_csv(os.environ.get("BLOCKED_DOMAINS"))),
         freshness_days=args.freshness_days if args.freshness_days is not None else parse_optional_int(os.environ.get("FRESHNESS_DAYS")),
         user_agent=args.user_agent or os.environ.get("USER_AGENT", "AutonomousResearchAgent/1.0"),
-        search_backend=os.environ.get("SEARCH_BACKEND", "duckduckgo_html"),
+        search_backend=os.environ.get("SEARCH_BACKEND", "bing_rss"),
         model_base_url=os.environ.get("MODEL_BASE_URL", "").strip(),
         model_name=os.environ.get("MODEL_NAME", "").strip(),
         model_api_key=(os.environ.get("MODEL_API_KEY", "").strip() or os.environ.get("OPENROUTER_API_KEY", "").strip()),

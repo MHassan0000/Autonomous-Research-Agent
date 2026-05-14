@@ -155,9 +155,12 @@ def maybe_refine_query(config: ResearchConfig, context_hits: list[dict[str, Any]
 def _build_research_plan_deterministic(query: str, depth: str) -> ResearchPlan:
     refined_query = normalize_whitespace(query)
     focus_areas = _deterministic_focus_areas(refined_query)
+    search_queries = build_search_queries(refined_query, depth)
+    if _looks_broad_or_vague(refined_query):
+        search_queries = _narrow_search_queries(refined_query, depth)
     return ResearchPlan(
         refined_query=refined_query,
-        search_queries=build_search_queries(refined_query, depth),
+        search_queries=search_queries,
         focus_areas=focus_areas,
         preferred_source_types=["official docs", "vendor docs", "independent analysis", "news coverage"],
         avoid_terms=["pricing", "download", "login"] if "agent" in refined_query.lower() else [],
@@ -184,6 +187,31 @@ def _deterministic_focus_areas(query: str) -> list[str]:
     if not areas:
         areas = ["Core definition", "Leading sources", "Tradeoffs", "Limitations"]
     return dedupe_preserve_order(areas)
+
+
+def _looks_broad_or_vague(query: str) -> bool:
+    lowered = normalize_text(query)
+    return any(term in lowered for term in ("research about", "why did", "what is", "top", "best", "latest")) or len(tokenize(query)) <= 5
+
+
+def _narrow_search_queries(query: str, depth: str) -> list[str]:
+    tokens = [token for token in tokenize(query) if len(token) > 3]
+    seed = " ".join(tokens[:6]) or query.strip()
+    expansions = [
+        f'"{seed}" history',
+        f'"{seed}" evolution',
+        f'"{seed}" overview',
+    ]
+    if "novel" in normalize_text(query) or "fiction" in normalize_text(query):
+        expansions = [
+            'history of the novel',
+            'evolution of the novel literary form',
+            'novel genre history culture publishing',
+            'fiction novel development history',
+        ]
+    if depth in {"deep", "exhaustive"}:
+        expansions.extend([f"{seed} analysis", f"{seed} scholarly review"])
+    return dedupe_preserve_order([seed] + expansions)
 
 
 def _synthesize_report_with_model(client: OpenRouterClient, config: ResearchConfig, run: ResearchRun) -> str:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from html import escape as html_escape
 import shutil
 import subprocess
 import re
@@ -156,74 +157,14 @@ def render_pdf(markdown_text: str, pdf_path: Path) -> None:
 def fallback_pdf(markdown_text: str, pdf_path: Path) -> None:
     try:
         from reportlab.lib import colors
-        from reportlab.lib.enums import TA_LEFT, TA_CENTER
         from reportlab.lib.pagesizes import LETTER
-        from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
         from reportlab.lib.units import inch
-        from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+        from reportlab.platypus import Paragraph, SimpleDocTemplate
     except Exception:
         pdf_path.write_text(markdown_text, encoding="utf-8")
         return
 
-    styles = getSampleStyleSheet()
-    styles.add(
-        ParagraphStyle(
-            name="ReportTitle",
-            parent=styles["Title"],
-            fontName="Helvetica-Bold",
-            fontSize=22,
-            leading=26,
-            textColor=colors.HexColor("#102A43"),
-            alignment=TA_LEFT,
-            spaceAfter=10,
-        )
-    )
-    styles.add(
-        ParagraphStyle(
-            name="ReportSubTitle",
-            parent=styles["BodyText"],
-            fontName="Helvetica",
-            fontSize=9,
-            leading=12,
-            textColor=colors.HexColor("#52606D"),
-            spaceAfter=12,
-        )
-    )
-    styles.add(
-        ParagraphStyle(
-            name="SectionHeader",
-            parent=styles["Heading1"],
-            fontName="Helvetica-Bold",
-            fontSize=14,
-            leading=18,
-            textColor=colors.HexColor("#102A43"),
-            spaceBefore=10,
-            spaceAfter=8,
-            keepWithNext=True,
-        )
-    )
-    styles.add(
-        ParagraphStyle(
-            name="SmallText",
-            parent=styles["BodyText"],
-            fontName="Helvetica",
-            fontSize=8,
-            leading=10,
-            textColor=colors.HexColor("#52606D"),
-        )
-    )
-    styles.add(
-        ParagraphStyle(
-            name="BulletText",
-            parent=styles["BodyText"],
-            fontName="Helvetica",
-            fontSize=9,
-            leading=12,
-            leftIndent=12,
-            bulletIndent=0,
-            spaceAfter=3,
-        )
-    )
+    styles = _report_styles()
 
     doc = SimpleDocTemplate(
         str(pdf_path),
@@ -236,44 +177,9 @@ def fallback_pdf(markdown_text: str, pdf_path: Path) -> None:
         author="Autonomous Research Agent",
     )
 
-    story = []
-    data = _parse_markdown_sections(markdown_text)
-    title = data.get("title", "Research Report")
-    meta = data.get("meta", [])
-    executive_summary = data.get("executive_summary", [])
-    key_findings = data.get("key_findings", [])
-    comparison_rows = data.get("comparison_rows", [])
-    gaps = data.get("gaps", [])
-    references = data.get("references", [])
-
-    story.append(Paragraph(title, styles["ReportTitle"]))
-    story.append(Paragraph("Autonomous Research Agent | analyst-style report", styles["ReportSubTitle"]))
-    if meta:
-        story.append(_make_key_value_table(meta))
-        story.append(Spacer(1, 10))
-    story.append(_section_heading("Executive Summary", styles))
-    story.extend(_bullets(executive_summary or ["No summary extracted."], styles))
-    story.append(_section_heading("Key Findings", styles))
-    if key_findings:
-        for item in key_findings:
-            story.append(Paragraph(f"<b>{_escape_inline(item.get('headline', 'Finding'))}</b>", styles["BodyText"]))
-            if item.get("details"):
-                story.extend(_bullets(item["details"], styles, indent=10))
-            story.append(Spacer(1, 4))
-    else:
-        story.extend(_bullets(["No findings extracted."], styles))
-    story.append(_section_heading("Source Comparison", styles))
-    if comparison_rows:
-        story.append(_make_source_table(comparison_rows))
-    else:
-        story.extend(_bullets(["No sources retained."], styles))
-    story.append(_section_heading("Gaps and Limitations", styles))
-    story.extend(_bullets(gaps or ["No material gaps were detected."], styles))
-    story.append(_section_heading("References", styles))
-    if references:
-        story.extend(_bullets(references, styles))
-    else:
-        story.extend(_bullets(["No references collected."], styles))
+    story = _markdown_to_story(markdown_text, styles, doc.width)
+    if not story:
+        story = [Paragraph("No report content available.", styles["ReportBody"])]
 
     def on_page(canvas, doc):
         canvas.saveState()
@@ -290,6 +196,374 @@ def fallback_pdf(markdown_text: str, pdf_path: Path) -> None:
         canvas.restoreState()
 
     doc.build(story, onFirstPage=on_page, onLaterPages=on_page)
+
+
+def _report_styles():
+    from reportlab.lib import colors
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+
+    styles = getSampleStyleSheet()
+    if "ReportTitle" not in styles:
+        styles.add(
+            ParagraphStyle(
+                name="ReportTitle",
+                parent=styles["Title"],
+                fontName="Helvetica-Bold",
+                fontSize=22,
+                leading=26,
+                textColor=colors.HexColor("#102A43"),
+                spaceAfter=4,
+            )
+        )
+    if "ReportSubtitle" not in styles:
+        styles.add(
+            ParagraphStyle(
+                name="ReportSubtitle",
+                parent=styles["BodyText"],
+                fontName="Helvetica",
+                fontSize=9,
+                leading=12,
+                textColor=colors.HexColor("#52606D"),
+                spaceAfter=10,
+            )
+        )
+    if "ReportHeading1" not in styles:
+        styles.add(
+            ParagraphStyle(
+                name="ReportHeading1",
+                parent=styles["Heading1"],
+                fontName="Helvetica-Bold",
+                fontSize=15,
+                leading=18,
+                textColor=colors.HexColor("#102A43"),
+                spaceBefore=10,
+                spaceAfter=6,
+                keepWithNext=True,
+            )
+        )
+    if "ReportHeading2" not in styles:
+        styles.add(
+            ParagraphStyle(
+                name="ReportHeading2",
+                parent=styles["Heading2"],
+                fontName="Helvetica-Bold",
+                fontSize=12,
+                leading=15,
+                textColor=colors.HexColor("#102A43"),
+                spaceBefore=8,
+                spaceAfter=4,
+                keepWithNext=True,
+            )
+        )
+    if "ReportHeading3" not in styles:
+        styles.add(
+            ParagraphStyle(
+                name="ReportHeading3",
+                parent=styles["Heading3"],
+                fontName="Helvetica-Bold",
+                fontSize=10,
+                leading=13,
+                textColor=colors.HexColor("#334E68"),
+                spaceBefore=6,
+                spaceAfter=3,
+                keepWithNext=True,
+            )
+        )
+    if "ReportBody" not in styles:
+        styles.add(
+            ParagraphStyle(
+                name="ReportBody",
+                parent=styles["BodyText"],
+                fontName="Helvetica",
+                fontSize=10,
+                leading=13,
+                textColor=colors.HexColor("#243B53"),
+                spaceAfter=4,
+            )
+        )
+    if "ReportBullet" not in styles:
+        styles.add(
+            ParagraphStyle(
+                name="ReportBullet",
+                parent=styles["BodyText"],
+                fontName="Helvetica",
+                fontSize=10,
+                leading=13,
+                leftIndent=12,
+                bulletIndent=0,
+                textColor=colors.HexColor("#243B53"),
+                spaceAfter=2,
+            )
+        )
+    if "ReportTableHeader" not in styles:
+        styles.add(
+            ParagraphStyle(
+                name="ReportTableHeader",
+                parent=styles["BodyText"],
+                fontName="Helvetica-Bold",
+                fontSize=8,
+                leading=10,
+                textColor=colors.white,
+            )
+        )
+    if "ReportTableCell" not in styles:
+        styles.add(
+            ParagraphStyle(
+                name="ReportTableCell",
+                parent=styles["BodyText"],
+                fontName="Helvetica",
+                fontSize=8,
+                leading=10,
+                textColor=colors.HexColor("#243B53"),
+            )
+        )
+    return styles
+
+
+def _markdown_to_story(markdown_text: str, styles, available_width: float):
+    from reportlab.lib import colors
+    from reportlab.lib.units import inch
+    from reportlab.platypus import Paragraph, Spacer, Table, TableStyle
+
+    lines = [line.rstrip() for line in markdown_text.splitlines()]
+    story = []
+    paragraph_lines: list[str] = []
+    table_lines: list[str] = []
+    saw_title = False
+    saw_subtitle = False
+    body_started = False
+
+    def flush_paragraph() -> None:
+        nonlocal paragraph_lines
+        if not paragraph_lines:
+            return
+        text = " ".join(part.strip() for part in paragraph_lines if part.strip())
+        paragraph_lines = []
+        if not text:
+            return
+        story.append(Paragraph(_markdown_inline_to_html(text), styles["ReportBody"]))
+
+    def flush_table() -> None:
+        nonlocal table_lines
+        if not table_lines:
+            return
+        table = _markdown_table_to_flowable(table_lines, styles, available_width)
+        table_lines = []
+        if table is not None:
+            story.append(table)
+            story.append(Spacer(1, 6))
+
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped:
+            flush_paragraph()
+            flush_table()
+            story.append(Spacer(1, 2))
+            continue
+
+        if _is_markdown_horizontal_rule(stripped):
+            flush_paragraph()
+            flush_table()
+            story.append(Spacer(1, 4))
+            continue
+
+        if not saw_title and _is_bold_only_line(stripped):
+            flush_paragraph()
+            flush_table()
+            story.append(Paragraph(_markdown_inline_to_html(_unwrap_markdown_emphasis(stripped)), styles["ReportTitle"]))
+            saw_title = True
+            continue
+
+        if saw_title and not saw_subtitle and not body_started and _is_italic_only_line(stripped):
+            flush_paragraph()
+            flush_table()
+            story.append(Paragraph(_markdown_inline_to_html(_unwrap_markdown_emphasis(stripped)), styles["ReportSubtitle"]))
+            saw_subtitle = True
+            continue
+
+        heading = re.match(r"^(#{1,6})\s+(.+)$", stripped)
+        if heading:
+            flush_paragraph()
+            flush_table()
+            level = len(heading.group(1))
+            text = heading.group(2).strip()
+            if level == 1 and not saw_title:
+                story.append(Paragraph(_markdown_inline_to_html(text), styles["ReportTitle"]))
+                saw_title = True
+            elif level <= 1:
+                story.append(Paragraph(_markdown_inline_to_html(text), styles["ReportHeading1"]))
+            elif level == 2:
+                story.append(Paragraph(_markdown_inline_to_html(text), styles["ReportHeading1"]))
+            elif level == 3:
+                story.append(Paragraph(_markdown_inline_to_html(text), styles["ReportHeading2"]))
+            else:
+                story.append(Paragraph(_markdown_inline_to_html(text), styles["ReportHeading3"]))
+            body_started = True
+            continue
+
+        bullet = re.match(r"^[-*+]\s+(.+)$", stripped)
+        if bullet:
+            flush_paragraph()
+            flush_table()
+            story.append(Paragraph(f"• {_markdown_inline_to_html(bullet.group(1).strip())}", styles["ReportBullet"]))
+            body_started = True
+            continue
+
+        numbered = re.match(r"^(\d+)[.)]\s+(.+)$", stripped)
+        if numbered:
+            flush_paragraph()
+            flush_table()
+            story.append(Paragraph(f"{numbered.group(1)}. {_markdown_inline_to_html(numbered.group(2).strip())}", styles["ReportBody"]))
+            body_started = True
+            continue
+
+        if _is_markdown_table_row(stripped):
+            flush_paragraph()
+            table_lines.append(stripped)
+            body_started = True
+            continue
+
+        if table_lines:
+            flush_table()
+
+        paragraph_lines.append(stripped)
+        body_started = True
+
+    flush_paragraph()
+    flush_table()
+    return story
+
+
+def _markdown_table_to_flowable(rows: list[str], styles, available_width: float):
+    from reportlab.lib import colors
+    from reportlab.platypus import Paragraph, Table, TableStyle
+
+    parsed_rows = [_split_markdown_table_row(row) for row in rows if row.strip()]
+    if len(parsed_rows) < 2:
+        return None
+    if not _is_markdown_table_separator_row(parsed_rows[1]):
+        return None
+
+    header = parsed_rows[0]
+    data_rows = parsed_rows[2:]
+    if not data_rows:
+        return None
+
+    column_count = max(len(header), max((len(row) for row in data_rows), default=0))
+    if column_count <= 0:
+        return None
+
+    header = _pad_cells(header, column_count)
+    normalized_rows = [_pad_cells(row, column_count) for row in data_rows]
+    table_data = [[Paragraph(_markdown_inline_to_html(cell), styles["ReportTableHeader"]) for cell in header]]
+    for row in normalized_rows:
+        table_data.append([Paragraph(_markdown_inline_to_html(cell), styles["ReportTableCell"]) for cell in row])
+
+    column_widths = _estimate_markdown_column_widths([header] + normalized_rows, available_width)
+    table = Table(table_data, colWidths=column_widths, repeatRows=1)
+    table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#102A43")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, 0), 8),
+                ("BACKGROUND", (0, 1), (-1, -1), colors.white),
+                ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD2D9")),
+                ("INNERGRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#D9E2EC")),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 5),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+                ("TOPPADDING", (0, 0), (-1, -1), 5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ]
+        )
+    )
+    return table
+
+
+def _markdown_inline_to_html(text: str) -> str:
+    value = html_escape(normalize_whitespace(str(text)))
+
+    def replace_link(match: re.Match[str]) -> str:
+        label = match.group(1)
+        url = html_escape(match.group(2), quote=True)
+        return f'<a href="{url}">{label}</a>'
+
+    value = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", replace_link, value)
+    value = re.sub(r"`([^`]+)`", r"<font face='Courier'>\1</font>", value)
+    value = re.sub(r"\*\*([^*]+)\*\*", r"<b>\1</b>", value)
+    value = re.sub(r"__([^_]+)__", r"<b>\1</b>", value)
+    value = re.sub(r"(?<!\*)\*([^*\n]+)\*(?!\*)", r"<i>\1</i>", value)
+    value = re.sub(r"(?<!_)_([^_\n]+)_(?!_)", r"<i>\1</i>", value)
+    return value
+
+
+def _unwrap_markdown_emphasis(text: str) -> str:
+    stripped = normalize_whitespace(text)
+    for prefix, suffix in (("**", "**"), ("__", "__"), ("*", "*"), ("_", "_")):
+        if stripped.startswith(prefix) and stripped.endswith(suffix) and len(stripped) > len(prefix) + len(suffix):
+            return stripped[len(prefix) : -len(suffix)]
+    return stripped
+
+
+def _is_bold_only_line(text: str) -> bool:
+    stripped = normalize_whitespace(text)
+    return bool(re.fullmatch(r"\*\*.+\*\*", stripped) or re.fullmatch(r"__.+__", stripped))
+
+
+def _is_italic_only_line(text: str) -> bool:
+    stripped = normalize_whitespace(text)
+    return bool(re.fullmatch(r"\*[^*].*[^*]\*", stripped) or re.fullmatch(r"_[^_].*[^_]_", stripped))
+
+
+def _is_markdown_horizontal_rule(text: str) -> bool:
+    stripped = text.strip()
+    return bool(re.fullmatch(r"(-\s*){3,}", stripped) or re.fullmatch(r"(\*\s*){3,}", stripped) or re.fullmatch(r"(_\s*){3,}", stripped))
+
+
+def _is_markdown_table_row(text: str) -> bool:
+    stripped = text.strip()
+    return stripped.startswith("|") and stripped.endswith("|") and stripped.count("|") >= 2
+
+
+def _split_markdown_table_row(text: str) -> list[str]:
+    stripped = text.strip().strip("|")
+    parts = re.split(r"(?<!\\)\|", stripped)
+    return [part.replace(r"\|", "|").strip() for part in parts]
+
+
+def _is_markdown_table_separator_row(cells: list[str]) -> bool:
+    if not cells:
+        return False
+    for cell in cells:
+        normalized = cell.replace(" ", "")
+        if not re.fullmatch(r":?-{3,}:?", normalized):
+            return False
+    return True
+
+
+def _pad_cells(cells: list[str], width: int) -> list[str]:
+    return cells + [""] * max(0, width - len(cells))
+
+
+def _estimate_markdown_column_widths(rows: list[list[str]], available_width: float) -> list[float]:
+    from reportlab.lib.units import inch
+
+    if not rows:
+        return [available_width]
+    column_count = max(len(row) for row in rows)
+    weights: list[float] = []
+    for index in range(column_count):
+        lengths = [len(normalize_whitespace(row[index])) for row in rows if index < len(row)]
+        weights.append(max(max(lengths, default=0), 8))
+    total = sum(weights) or 1.0
+    widths = [available_width * weight / total for weight in weights]
+    min_width = 0.8 * inch
+    max_width = 3.5 * inch
+    widths = [min(max(width, min_width), max_width) for width in widths]
+    scale = available_width / (sum(widths) or 1.0)
+    return [width * scale for width in widths]
 
 
 def escape_pipe(text: str) -> str:
