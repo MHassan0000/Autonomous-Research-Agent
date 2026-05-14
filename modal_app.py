@@ -80,6 +80,14 @@ def web_app():
 
     app = FastAPI(title=APP_NAME)
 
+    security_headers = {
+        "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "DENY",
+        "Referrer-Policy": "no-referrer",
+        "Content-Security-Policy": "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; img-src 'self' data:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'",
+    }
+
     def _coerce_int(value, default: int) -> int:
         try:
             if value in (None, ""):
@@ -103,8 +111,21 @@ def web_app():
             except Exception:
                 pass
         if not payload:
-            payload.update({str(k): str(v) for k, v in request.query_params.items() if v is not None})
+                payload.update({str(k): str(v) for k, v in request.query_params.items() if v is not None})
         return payload
+
+    def _resolve_report_path(filename: str) -> Path | None:
+        reports_root = Path(RESEARCH_MOUNT).resolve()
+        candidate = (reports_root / filename).resolve()
+        try:
+            candidate.relative_to(reports_root)
+        except ValueError:
+            return None
+        if candidate.suffix.lower() not in {".pdf", ".md", ".json"}:
+            return None
+        if not candidate.exists() or not candidate.is_file():
+            return None
+        return candidate
 
     @app.get("/")
     def home():
@@ -346,7 +367,8 @@ def web_app():
                  </script>
               </body>
             </html>
-            """
+            """,
+            headers=security_headers,
         )
 
     @app.post("/research")
@@ -374,7 +396,7 @@ def web_app():
         )
 
         if not args.query:
-            return JSONResponse({"error": "query is required"}, status_code=400)
+            return JSONResponse({"error": "query is required"}, status_code=400, headers=security_headers)
 
         config = build_config(args)
         memory = ResearchMemory(config.memory_db_path)
@@ -396,7 +418,8 @@ def web_app():
                     "pdf_url": f"/reports/{run.run_id}.pdf",
                     "pdf": Path(run.artifacts.get("pdf", "")).name if run.artifacts.get("pdf") else "",
                     "markdown": Path(run.artifacts.get("markdown", "")).name if run.artifacts.get("markdown") else "",
-                }
+                },
+                headers=security_headers,
             )
         finally:
             memory.close()
@@ -406,16 +429,15 @@ def web_app():
         reports = Path(RESEARCH_MOUNT)
         pdfs = sorted(reports.glob("*.pdf"), key=lambda p: p.stat().st_mtime, reverse=True)
         if not pdfs:
-            return JSONResponse({"error": "No PDF available yet"}, status_code=404)
-        return FileResponse(str(pdfs[0]), media_type="application/pdf", filename=pdfs[0].name)
+            return JSONResponse({"error": "No PDF available yet"}, status_code=404, headers=security_headers)
+        return FileResponse(str(pdfs[0]), media_type="application/pdf", filename=pdfs[0].name, headers=security_headers)
 
     @app.get("/reports/{filename}")
     def report_file(filename: str):
-        reports = Path(RESEARCH_MOUNT)
-        path = reports / filename
-        if not path.exists() or path.suffix.lower() not in {".pdf", ".md", ".json"}:
-            return JSONResponse({"error": "Report not found"}, status_code=404)
+        path = _resolve_report_path(filename)
+        if path is None:
+            return JSONResponse({"error": "Report not found"}, status_code=404, headers=security_headers)
         media_type = "application/pdf" if path.suffix.lower() == ".pdf" else "text/plain; charset=utf-8"
-        return FileResponse(str(path), media_type=media_type, filename=path.name)
+        return FileResponse(str(path), media_type=media_type, filename=path.name, headers=security_headers)
 
     return app
