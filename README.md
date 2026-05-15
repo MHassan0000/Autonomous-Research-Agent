@@ -23,3 +23,15 @@ python tools/research_agent.py --query "your topic" --depth standard --output pd
 ```
 
 Use `--self-test` to verify the local pipeline without hitting the web.
+
+## Local Dashboard
+
+Run the Streamlit control panel with:
+
+```bash
+run_dashboard.bat
+```
+
+If you prefer the direct command, use `python -m streamlit run streamlit_app.py`.
+
+The dashboard lets you adjust model settings, filters, run parameters, and download the generated PDF.
